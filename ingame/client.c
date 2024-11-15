@@ -1,4 +1,4 @@
-// #include <stdio.h>
+#include <stdio.h>
 // #include <stdlib.h>
 // #include <string.h>
 // #include <unistd.h>
@@ -114,8 +114,7 @@
 
 //     close(sockfd);
 //     return 0;
-// }
-#include <stdio.h>
+// }#include <stdio.h>  // 반드시 포함되어야 합니다.
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -134,6 +133,7 @@ typedef struct {
 } Client;
 
 Client client;
+int voting_mode = 0;  // 투표 모드를 추적하는 변수 (0: 비활성화, 1: 활성화)
 
 void error(char *msg) {
     perror(msg);
@@ -181,10 +181,20 @@ int main() {
     pthread_create(&recv_thread, NULL, receive_messages, NULL);  // 메시지 수신 스레드
 
     while (1) {
-        // 클라이언트로부터 입력을 받아 서버로 전송
         char msg[BUF_SIZE];
         fgets(msg, sizeof(msg), stdin);
-        write(client.sock, msg, strlen(msg));
+
+        if (voting_mode) {  // 투표 모드일 때
+            int vote = atoi(msg);
+            if (vote >= 1 && vote <= 5) {
+                snprintf(msg, sizeof(msg), "%d\n", vote);  // 서버에 보낼 메시지로 정수 변환
+                write(client.sock, msg, strlen(msg));
+            } else {
+                printf("잘못된 투표 번호입니다. 1~5 사이의 숫자를 입력하세요.\n");
+            }
+        } else {  // 일반 채팅 모드일 때
+            write(client.sock, msg, strlen(msg));
+        }
     }
 
     pthread_join(recv_thread, NULL);

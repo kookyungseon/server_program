@@ -280,6 +280,8 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <time.h>
+#include <ctype.h> 
+ 
 
 #define MAX_USERS 5
 #define BUF_SIZE 1024
@@ -297,62 +299,64 @@ Client clients[MAX_USERS];
 int num_clients = 0;
 time_t start_time;
 pthread_mutex_t lock;
+int vote_counts[MAX_USERS] = {0};
+int votes_received = 0;  // 각 클라이언트에 대한 투표 수
 
 void error(char *msg) {
     perror(msg);
     exit(1);
 }
-void *client_handler(void *arg) {
-    Client *client = (Client *)arg;
-    char msg[BUF_SIZE];
-    int len;
+// void *client_handler(void *arg) {
+//     Client *client = (Client *)arg;
+//     char msg[BUF_SIZE];
+//     int len;
 
-    // 클라이언트로부터 닉네임 받기
-    len = read(client->sock, msg, sizeof(msg) - 1);
-    if (len > 0) {
-        msg[len] = '\0';
-        snprintf(client->nickname, sizeof(client->nickname), "%s", msg);
-    }
+//     // 클라이언트로부터 닉네임 받기
+//     len = read(client->sock, msg, sizeof(msg) - 1);
+//     if (len > 0) {
+//         msg[len] = '\0';
+//         snprintf(client->nickname, sizeof(client->nickname), "%s", msg);
+//     }
 
-    // 클라이언트가 보내는 메시지를 다른 클라이언트들에게 전달
-    while (1) {
-        len = read(client->sock, msg, sizeof(msg));
-        if (len > 0) {
-            msg[len] = '\0';
+//     // 클라이언트가 보내는 메시지를 다른 클라이언트들에게 전달
+//     while (1) {
+//         len = read(client->sock, msg, sizeof(msg));
+//         if (len > 0) {
+//             msg[len] = '\0';
 
-            // 채팅 모드와 투표 모드를 구분
-            if (client->in_voting) {
-                // 투표 중일 때만 입력받고, 채팅은 금지
-                if (msg[0] >= '1' && msg[0] <= '5' && msg[1] == '\0') {
-                    // 1~5 사이의 숫자만 유효한 투표 번호
-                    int voted_player = msg[0] - '1';  // 문자로부터 숫자 추출
-                    if (voted_player >= 0 && voted_player < MAX_USERS) {
-                        pthread_mutex_lock(&lock);
-                        client->voted_for = voted_player;  // 투표한 플레이어 저장
-                        pthread_mutex_unlock(&lock);
-                        printf("%s님이 Player %d에게 투표했습니다.\n", client->nickname, voted_player + 1);
-                    } else {
-                        printf("%s님이 잘못된 번호에 투표했습니다: %s\n", client->nickname, msg);
-                        write(client->sock, "잘못된 투표 번호입니다. 다시 시도하세요.\n", 39);
-                    }
-                } else {
-                    write(client->sock, "잘못된 입력입니다. 1~5 사이의 번호를 입력하세요.\n", 45);
-                }
-            } else {
-                // 채팅 중일 때
-                printf("[채팅] %s: %s", client->nickname, msg);
-                // 모든 클라이언트에게 채팅 메시지 전송 (닉네임과 메시지 포함)
-                for (int i = 0; i < num_clients; i++) {
-                    if (clients[i].sock != client->sock) {
-                        char formatted_msg[BUF_SIZE];
-                        snprintf(formatted_msg, sizeof(formatted_msg), "[%s]: %s", client->nickname, msg);
-                        write(clients[i].sock, formatted_msg, strlen(formatted_msg));
-                    }
-                }
-            }
-        }
-    }
-}
+//             // 채팅 모드와 투표 모드를 구분
+//             if (client->in_voting) {
+//                 // 투표 중일 때만 입력받고, 채팅은 금지
+//                 if (msg[0] >= '1' && msg[0] <= '5' && msg[1] == '\0') {
+//                     // 1~5 사이의 숫자만 유효한 투표 번호
+//                     int voted_player = msg[0] - '1';  // 문자로부터 숫자 추출
+//                     if (voted_player >= 0 && voted_player < MAX_USERS) {
+//                         pthread_mutex_lock(&lock);
+//                         client->voted_for = voted_player;  // 투표한 플레이어 저장
+//                         pthread_mutex_unlock(&lock);
+//                         printf("%s님이 Player %d에게 투표했습니다.\n", client->nickname, voted_player + 1);
+//                     } else {
+//                         printf("%s님이 잘못된 번호에 투표했습니다: %s\n", client->nickname, msg);
+//                         write(client->sock, "잘못된 투표 번호입니다. 다시 시도하세요.\n", 39);
+//                     }
+//                 } else {
+//                     write(client->sock, "잘못된 입력입니다.\n", 45);
+//                 }
+//             } else {
+//                 // 채팅 중일 때
+//                 printf("[채팅] %s: %s", client->nickname, msg);
+//                 // 모든 클라이언트에게 채팅 메시지 전송 (닉네임과 메시지 포함)
+//                 for (int i = 0; i < num_clients; i++) {
+//                     if (clients[i].sock != client->sock) {
+//                         char formatted_msg[BUF_SIZE];
+//                         snprintf(formatted_msg, sizeof(formatted_msg), "[%s]: %s", client->nickname, msg);
+//                         write(clients[i].sock, formatted_msg, strlen(formatted_msg));
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
 
 
@@ -412,65 +416,257 @@ void start_discussion() {
 
     snprintf(msg, sizeof(msg), "시간이 끝났습니다! 이제 투표가 시작됩니다.\n");
     send_to_all_clients(msg);
-}void voting() {
+}
+// 투표 결과 집계 함수
+void tally_votes_and_display_results() {
+    int max_votes = 0;
+    int eject_index = -1;
+    int max_vote_count = 0;
+
+    // 투표 결과 집계
+    for (int i = 0; i < num_clients; i++) {
+        if (vote_counts[i] > max_votes) {
+            max_votes = vote_counts[i];
+            eject_index = i;
+            max_vote_count = 1;
+        } else if (vote_counts[i] == max_votes && max_votes > 0) {
+            max_vote_count++;
+        }
+    }
+
+    // 결과 메시지 생성
+    char result_msg[BUF_SIZE];
+    if (max_vote_count > 1) {
+        snprintf(result_msg, sizeof(result_msg), "[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
+    } else if (max_votes > 0) {
+        snprintf(result_msg, sizeof(result_msg), "[사회자] 투표 결과: Player %d가 추방되었습니다!\n", eject_index + 1);
+    } else {
+        snprintf(result_msg, sizeof(result_msg), "[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
+    }
+
+    // 모든 클라이언트에게 결과 전송
+    send_to_all_clients(result_msg);
+    printf("%s", result_msg);
+}
+
+// 투표 종료 및 집계 호출 함수
+void end_voting() {
+    for (int i = 0; i < num_clients; i++) {
+        clients[i].in_voting = 0;  // 투표 모드 종료
+    }
+    tally_votes_and_display_results();  // 투표 결과 집계 함수 호출
+}
+
+void *client_handler(void *arg) {
+    Client *client = (Client *)arg;
+    char msg[BUF_SIZE];
+    int len;
+
+    // 클라이언트로부터 닉네임 받기
+    len = read(client->sock, msg, sizeof(msg) - 1);
+    if (len > 0) {
+        msg[len] = '\0';
+        snprintf(client->nickname, sizeof(client->nickname), "%s", msg);
+    }
+
+    // 클라이언트가 보내는 메시지를 처리
+    while (1) {
+        len = read(client->sock, msg, sizeof(msg));
+        if (len > 0) {
+            msg[len] = '\0';
+            msg[strcspn(msg, "\n")] = '\0';
+
+            // 투표 모드와 채팅 모드 구분
+            if (client->in_voting) {
+                // 투표 중일 때만 입력받고, 채팅은 금지
+                if (msg[0] >= '1' && msg[0] <= '5' && msg[1] == '\0') {
+                    // 1~5 사이의 숫자만 유효한 투표 번호
+                    int voted_player = msg[0] - '1';  // 문자로부터 숫자 추출
+                    if (voted_player >= 0 && voted_player < num_clients) {
+                        pthread_mutex_lock(&lock);
+                        if (client->voted_for == -1) {  // 투표한 적이 없는 경우에만 투표 반영
+                            vote_counts[voted_player]++;
+                            client->voted_for = voted_player;  // 투표한 플레이어 저장
+                            votes_received++;
+                            printf("%s님이 Player %d에게 투표했습니다.\n", client->nickname, voted_player + 1);
+
+                            // 모든 클라이언트가 투표를 완료했으면 투표 종료 및 결과 집계 호출
+                            if (votes_received == num_clients) {
+                                end_voting();
+                            }
+                        } else {
+                            write(client->sock, "이미 투표를 완료했습니다.\n", 45);
+                        }
+                        pthread_mutex_unlock(&lock);
+                    } else {
+                        write(client->sock, "잘못된 투표 번호입니다. 다시 시도하세요.\n", 39);
+                    }
+                } else {
+                    printf("입력값: '%s'\n", msg);  // 디버깅을 위한 출력
+                    write(client->sock, "잘못된 입력입니다.\n", 45);
+                }
+            } else {
+                // 채팅 중일 때
+                printf("[채팅] %s: %s\n", client->nickname, msg);
+                // 모든 클라이언트에게 채팅 메시지 전송 (닉네임과 메시지 포함)
+                for (int i = 0; i < num_clients; i++) {
+                    if (clients[i].sock != client->sock) {
+                        char formatted_msg[BUF_SIZE];
+                        snprintf(formatted_msg, sizeof(formatted_msg), "[%s]: %s", client->nickname, msg);
+                        write(clients[i].sock, formatted_msg, strlen(formatted_msg));
+                    }
+                }
+            }
+        }
+    }
+}
+// 투표 종료 후 결과 집계 함수
+void voting() {
     int vote_counts[MAX_USERS] = {0};  // 각 클라이언트에 대한 투표 수
     char msg[BUF_SIZE];
-
-    // 투표 메시지 전송
+    
     snprintf(msg, sizeof(msg), "=== 투표를 시작합니다! ===\n투표를 진행하세요! 누구를 추방할까요? (1~%d 중 번호를 입력하세요)", MAX_USERS);
     send_to_all_clients(msg);
 
     // 투표 모드로 전환
     for (int i = 0; i < num_clients; i++) {
         clients[i].in_voting = 1;  // 투표 모드 활성화
+        clients[i].voted_for = -1;  // 초기화
     }
 
-    // 각 클라이언트로부터 투표를 받음
-    for (int i = 0; i < num_clients; i++) {
-        // 투표 입력 받기
-        read(clients[i].sock, msg, sizeof(msg));
+    int votes_received = 0;
+    while (votes_received < num_clients) {
+        for (int i = 0; i < num_clients; i++) {
+            if (clients[i].in_voting) {
+                int len = read(clients[i].sock, msg, sizeof(msg) - 1);
+                if (len > 0) {
+                    msg[len] = '\0';
 
-        // 입력값 끝에 있는 \n 제거
-        msg[strcspn(msg, "\n")] = 0;
+                    // 입력값에서 개행 문자 제거
+                    msg[strcspn(msg, "\n")] = '\0';
 
-        // 입력값을 정수로 변환
-        int voted_player = atoi(msg) - 1;  // 1부터 시작하므로 인덱스를 위해 -1
+                    // 입력값을 서버 콘솔에 출력 (디버깅용)
+                    printf("Received input from %s: '%s'\n", clients[i].nickname, msg);
 
-        // 유효한 투표 번호인지 확인 후 투표 수 증가
-        if (voted_player >= 0 && voted_player < MAX_USERS) {
-            vote_counts[voted_player]++;
-            printf("%s님이 Player %d에게 투표했습니다.\n", clients[i].nickname, voted_player + 1);  // 서버 콘솔에 표시
-        } else {
-            printf("%s님이 잘못된 번호에 투표했습니다: %s\n", clients[i].nickname, msg);
+                    // 입력값이 숫자인지 확인하고 유효 범위인지 검사
+                    if (isdigit(msg[0]) && msg[1] == '\0') {
+                        int voted_player = atoi(msg) - 1;  // 문자열을 정수로 변환
+                        if (voted_player >= 0 && voted_player < MAX_USERS) {
+                            pthread_mutex_lock(&lock);
+                            if (clients[i].voted_for == -1) {  // 중복 투표 방지
+                                clients[i].voted_for = voted_player;
+                                vote_counts[voted_player]++;
+                                votes_received++;
+                                printf("%s님이 Player %d에게 투표했습니다.\n", clients[i].nickname, voted_player + 1);
+                            }
+                            clients[i].in_voting = 0;  // 투표 완료
+                            pthread_mutex_unlock(&lock);
+                        } else {
+                            write(clients[i].sock, "잘못된 투표 번호입니다. 다시 시도하세요.\n", 39);
+                        }
+                    } else {
+                        write(clients[i].sock, "잘못된 입력입니다. 숫자 1~5를 입력하세요.\n", 45);
+                    }
+                }
+            }
         }
     }
 
-    // 투표 모드 종료
-    for (int i = 0; i < num_clients; i++) {
-        clients[i].in_voting = 0;  // 투표 모드 비활성화
-    }
-
-    // 가장 많은 투표를 받은 사람을 추방
+    // 투표 종료 후 처리
     int max_votes = 0;
     int eject_index = -1;
+    int max_vote_count = 0;
+
+    // 최다 득표 수와 동점 여부 확인
     for (int i = 0; i < MAX_USERS; i++) {
         if (vote_counts[i] > max_votes) {
             max_votes = vote_counts[i];
             eject_index = i;
+            max_vote_count = 1;
+        } else if (vote_counts[i] == max_votes && max_votes > 0) {
+            max_vote_count++;
         }
     }
 
-    // 결과 출력
-    if (max_votes > 0) {  // 다수결로 추방
+    // 동점 확인 후 결과 메시지 생성
+    if (max_vote_count > 1) {
+        snprintf(msg, sizeof(msg), "[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
+    } else if (max_votes > 0) {
         snprintf(msg, sizeof(msg), "[사회자] 투표 결과: Player %d가 추방되었습니다!\n", eject_index + 1);
-        send_to_all_clients(msg);
-        printf("[사회자] 투표 결과: Player %d가 추방되었습니다!\n", eject_index + 1);
     } else {
         snprintf(msg, sizeof(msg), "[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
-        send_to_all_clients(msg);
-        printf("[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
     }
+
+    send_to_all_clients(msg);
+    printf("%s", msg);
 }
+
+
+// void voting() {
+//     int vote_counts[MAX_USERS] = {0};  // 각 클라이언트에 대한 투표 수
+//     char msg[BUF_SIZE];
+
+//     // 플레이어 목록과 투표 시작 메시지 전송
+//     snprintf(msg, sizeof(msg), "=== 투표를 시작합니다! ===\n");
+//     send_to_all_clients(msg);
+    
+//     for (int i = 0; i < num_clients; i++) {
+//         snprintf(msg, sizeof(msg), "%d. %s\n", i + 1, clients[i].nickname);
+//         send_to_all_clients(msg);
+//     }
+//     send_to_all_clients("누구를 추방할까요? (번호를 입력하세요)");
+
+//     // 투표 모드로 전환
+//     for (int i = 0; i < num_clients; i++) {
+//         clients[i].in_voting = 1;
+//     }
+
+//     // 투표를 비동기적으로 수집
+//     int votes_received = 0;
+//     while (votes_received < num_clients) {
+//         for (int i = 0; i < num_clients; i++) {
+//             if (clients[i].in_voting && read(clients[i].sock, msg, sizeof(msg)) > 0) {
+//                 msg[strcspn(msg, "\n")] = 0;
+
+//                 // 유효한 투표인지 확인
+//                 int voted_player = atoi(msg) - 1;
+//                 if (voted_player >= 0 && voted_player < num_clients) {
+//                     vote_counts[voted_player]++;
+//                     printf("%s님이 Player %d에게 투표했습니다.\n", clients[i].nickname, voted_player + 1);
+//                     clients[i].in_voting = 0;  // 투표 완료
+//                     votes_received++;
+//                 } else {
+//                     write(clients[i].sock, "잘못된 투표 번호입니다. 다시 시도하세요.\n", 39);
+//                 }
+//             }
+//         }
+//     }
+
+//     // 투표 모드 종료
+//     for (int i = 0; i < num_clients; i++) {
+//         clients[i].in_voting = 0;
+//     }
+
+//     // 가장 많은 투표를 받은 사람을 추방
+//     int max_votes = 0;
+//     int eject_index = -1;
+//     for (int i = 0; i < num_clients; i++) {
+//         if (vote_counts[i] > max_votes) {
+//             max_votes = vote_counts[i];
+//             eject_index = i;
+//         }
+//     }
+
+//     // 결과 출력
+//     if (max_votes > 0) {
+//         snprintf(msg, sizeof(msg), "[사회자] 투표 결과: Player %d (%s)가 추방되었습니다!\n", eject_index + 1, clients[eject_index].nickname);
+//         send_to_all_clients(msg);
+//         printf("[사회자] 투표 결과: Player %d (%s)가 추방되었습니다!\n", eject_index + 1, clients[eject_index].nickname);
+//     } else {
+//         send_to_all_clients("[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
+//         printf("[사회자] 투표 결과: 아무도 추방되지 않았습니다.\n");
+//     }
+// }
 
 
 void *server_handler(void *arg) {
