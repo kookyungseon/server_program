@@ -1,88 +1,109 @@
 #include <stdio.h>
-
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <strings.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <pthread.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <arpa/inet.h>
+#include <time.h>
 
 #define BUF_SIZE 1024
-#define SERVER_IP "127.0.0.1"
-#define PORT 8080
 
-typedef struct {
-    int sock;
-    char nickname[50];
-} Client;
-
-Client client;
-int voting_mode = 0;  // 투표 모드를 추적하는 변수 (0: 비활성화, 1: 활성화)
-
-void error(char *msg) {
-    perror(msg);
+int tcp_connect(int af, char *servip, unsigned short port);
+void error(char* msg) {
+    perror(msg); 
     exit(1);
 }
 
-void *receive_messages(void *arg) {
-    char msg[BUF_SIZE];
-    int len;
-
-    while (1) {
-        len = read(client.sock, msg, sizeof(msg));
-        if (len > 0) {
-            msg[len] = '\0';
-            printf("%s\n", msg);  // 메시지 출력
-        }
-    }
+void clear_buffer() {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
 }
 
-int main() {
-    int sock;
-    struct sockaddr_in server_addr;
-    pthread_t recv_thread;
-
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        error("Socket error");
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        printf("Usage: %s <IP> <port>\n", argv[0]);
+        exit(1);
     }
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
-    server_addr.sin_port = htons(PORT);
-
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        error("Connect error");
+    int s;
+    char msg[BUF_SIZE];
+    char nickname[50];
+    int max_socket_num;
+    int length;
+    fd_set fds;
+    
+    // 서버 연결
+    s = tcp_connect(AF_INET, argv[1], atoi(argv[2]));
+    if(s == -1) {
+        error("socket error");
     }
-
-    client.sock = sock;
-    printf("게임에 참여합니다. 닉네임을 입력하세요: ");
-    fgets(client.nickname, sizeof(client.nickname), stdin);
-    client.nickname[strcspn(client.nickname, "\n")] = '\0';  
-    write(client.sock, client.nickname, strlen(client.nickname));
-
-    pthread_create(&recv_thread, NULL, receive_messages, NULL);  // 메시지 수신 스레드
-
-    while (1) {
-        char msg[BUF_SIZE];
-        fgets(msg, sizeof(msg), stdin);
-
-        if (voting_mode) {  // 투표 모드일 때
-            int vote = atoi(msg);
-            if (vote >= 1 && vote <= 5) {
-                snprintf(msg, sizeof(msg), "%d\n", vote);  // 서버에 보낼 메시지로 정수 변환
-                write(client.sock, msg, strlen(msg));
-            } else {
-                printf("잘못된 투표 번호입니다. 1~5 사이의 숫자를 입력하세요.\n");
-            }
-        } else {  // 일반 채팅 모드일 때
-            write(client.sock, msg, strlen(msg));
+    
+    // 닉네임 입력
+    printf("닉네임을 입력하세요: ");
+    fgets(nickname, sizeof(nickname), stdin);
+    nickname[strcspn(nickname, "\n")] = 0;
+    write(s, nickname, strlen(nickname));
+    
+    max_socket_num = s + 1;
+    printf("서버에 접속했습니다!\n");
+    
+    while(1) {
+        FD_ZERO(&fds);
+        FD_SET(0, &fds);
+        FD_SET(s, &fds);
+        
+        if(select(max_socket_num, &fds, NULL, NULL, NULL) < 0) {
+            error("select fail");
         }
+        
+        // 서버로부터 메시지 수신
+        if(FD_ISSET(s, &fds)) {
+            length = read(s, msg, sizeof(msg) - 1);
+            if(length <= 0) {
+                printf("서버와의 연결이 끊어졌습니다.\n");
+                break;
+            }
+            msg[length] = 0;
+            printf("%s", msg);  // 서버 메시지 출력
+        }
+        
+        // 사용자 입력 처리
+        if(FD_ISSET(0, &fds)) {
+            fgets(msg, sizeof(msg), stdin);
+            if(strlen(msg) > 0) {
+                write(s, msg, strlen(msg));
+            }
+        }
+        
+        length = 0;
+        memset(msg, 0, sizeof(msg));
     }
-
-    pthread_join(recv_thread, NULL);
-    close(client.sock);
+    
+    close(s);
     return 0;
+}
+
+int tcp_connect(int af, char *servip, unsigned short port) {
+    struct sockaddr_in servaddr;
+    int s;
+    
+    // 소켓 생성
+    if ((s = socket(af, SOCK_STREAM, 0)) < 0)
+        return -1;
+    
+    // 서버 주소 구조체 초기화
+    bzero((char *)&servaddr, sizeof(servaddr));
+    servaddr.sin_family = af;
+    inet_pton(AF_INET, servip, &servaddr.sin_addr);
+    servaddr.sin_port = htons(port);
+    
+    // 연결 요청
+    if (connect(s, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
+        return -1;
+    
+    return s;
 }

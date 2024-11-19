@@ -2,6 +2,8 @@
     "files.associations": {
         "*.embeddedhtml": "html",
         "stdio.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "in.h": "c",
+        "inet.h": "c"
     }
 }
